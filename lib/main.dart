@@ -121,7 +121,7 @@ class HomeScreen extends StatelessWidget {
   },
 ),
 
-              _HomeCard(
+_HomeCard(
   icon: Icons.bar_chart,
   title: 'التقارير',
   subtitle: 'تقارير المبيعات',
@@ -135,6 +135,13 @@ class HomeScreen extends StatelessWidget {
     );
   },
 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class _HomeCard extends StatelessWidget {
   final IconData icon;
