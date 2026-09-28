@@ -29,6 +29,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   DateTime? candidateStartedAt;
 
   bool isProcessing = false;
+  bool isSavingInvoice = false;
 
   String? notice;
   bool flashGreen = false;
@@ -43,18 +44,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     super.initState();
 
     scanner = MobileScannerController(
-      // مهم:
-      // لا نستخدم noDuplicates لأننا نحتاج رؤية نفس
-      // الباركود أكثر من مرة للتأكد منه.
       detectionSpeed: DetectionSpeed.normal,
-
       detectionTimeoutMs: 250,
-
-      // أهم تعديل:
-      // منع الكاميرا من عمل Zoom تلقائي.
       autoZoom: false,
-
-      // باركود المنتجات فقط.
       formats: const [
         BarcodeFormat.ean13,
         BarcodeFormat.ean8,
@@ -87,12 +79,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
       final code = raw.replaceAll(RegExp(r'\s+'), '');
 
-      // معظم باركود المنتجات Numeric.
       if (!RegExp(r'^\d+$').hasMatch(code)) {
         continue;
       }
 
-      // أطوال الباركود الشائعة للمنتجات.
       if (code.length != 8 &&
           code.length != 12 &&
           code.length != 13 &&
@@ -107,7 +97,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   }
 
   Future<void> handleScan(BarcodeCapture capture) async {
-    if (isProcessing) {
+    if (isProcessing || isSavingInvoice) {
       return;
     }
 
@@ -119,9 +109,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
 
     final now = DateTime.now();
 
-    // ---------------------------------------------------------
-    // 1. تأكيد القراءة
-    // ---------------------------------------------------------
+    // ===============================
+    // تأكيد قراءة الباركود
+    // ===============================
 
     if (candidateCode == code) {
       candidateCount++;
@@ -131,7 +121,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       candidateStartedAt = now;
     }
 
-    // لو القراءة لم تستقر خلال ثانية نبدأ من جديد.
     if (candidateStartedAt != null &&
         now.difference(candidateStartedAt!).inMilliseconds > 1000) {
       candidateCode = code;
@@ -150,7 +139,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       },
     );
 
-    // ننتظر ظهور نفس الرقم مرتين.
     if (candidateCount < requiredConfirmations) {
       if (mounted) {
         setState(() {
@@ -161,9 +149,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
       return;
     }
 
-    // ---------------------------------------------------------
-    // 2. منع إضافة نفس المنتج بسرعة مرتين
-    // ---------------------------------------------------------
+    // ===============================
+    // منع التكرار السريع
+    // ===============================
 
     if (lastCode == code &&
         lastScanAt != null &&
@@ -181,10 +169,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     isProcessing = true;
 
     try {
-      // ---------------------------------------------------------
-      // 3. البحث في قاعدة البيانات
-      // ---------------------------------------------------------
-
       final product =
           await ref.read(databaseProvider).findByBarcode(code);
 
@@ -192,9 +176,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         return;
       }
 
-      // ---------------------------------------------------------
-      // 4. المنتج غير موجود
-      // ---------------------------------------------------------
+      // ===============================
+      // المنتج غير موجود
+      // ===============================
 
       if (product == null) {
         setState(() {
@@ -212,13 +196,39 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         return;
       }
 
-      // ---------------------------------------------------------
-      // 5. المنتج موجود
-      // ---------------------------------------------------------
+      // ===============================
+      // التحقق من المخزون
+      // ===============================
+
+      final cart = ref.read(cartProvider);
+
+      final existingIndex = cart.indexWhere(
+        (item) => item.product.barcode == product.barcode,
+      );
+
+      final currentCartQuantity =
+          existingIndex >= 0 ? cart[existingIndex].quantity : 0;
+
+      if (currentCartQuantity + 1 > product.quantity) {
+        setState(() {
+          notice = 'الكمية غير متوفرة في المخزون';
+        });
+
+        await HapticFeedback.heavyImpact();
+
+        return;
+      }
+
+      // ===============================
+      // إضافة المنتج للسلة
+      // ===============================
 
       ref.read(cartProvider.notifier).add(product);
 
-      await SystemSound.play(SystemSoundType.click);
+      await SystemSound.play(
+        SystemSoundType.click,
+      );
+
       await HapticFeedback.lightImpact();
 
       if (!mounted) {
@@ -258,11 +268,13 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () =>
+                Navigator.pop(context, false),
             child: const Text('إلغاء'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () =>
+                Navigator.pop(context, true),
             child: const Text('إضافة المنتج'),
           ),
         ],
@@ -283,40 +295,172 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     }
   }
 
-  void newInvoice() {
-    if (ref.read(cartProvider).isEmpty) {
+  // ============================================================
+  // إتمام البيع
+  // ============================================================
+
+  Future<void> completeSale() async {
+    final cart = ref.read(cartProvider);
+
+    if (cart.isEmpty) {
       return;
     }
 
-    showDialog<bool>(
+    final total = ref.read(cartTotalProvider);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('إتمام البيع'),
+        content: Text(
+          'هل تريد حفظ الفاتورة وإتمام البيع؟\n\n'
+          'الإجمالي: ${total.toStringAsFixed(2)} ج.م',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(context, true),
+            child: const Text('إتمام البيع'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      isSavingInvoice = true;
+      notice = 'جاري حفظ الفاتورة...';
+    });
+
+    try {
+      final saveInvoice =
+          ref.read(saveInvoiceProvider);
+
+      final invoiceNumber = await saveInvoice();
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        notice = 'تم حفظ الفاتورة رقم $invoiceNumber';
+      });
+
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تم البيع بنجاح'),
+          content: Text(
+            'رقم الفاتورة:\n$invoiceNumber\n\n'
+            'الإجمالي:\n${total.toStringAsFixed(2)} ج.م',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context),
+              child: const Text('فاتورة جديدة'),
+            ),
+          ],
+        ),
+      );
+
+      if (mounted) {
+        setState(() {
+          notice = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        notice = 'فشل حفظ الفاتورة';
+      });
+
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('تعذر إتمام البيع'),
+          content: Text(
+            e.toString().replaceFirst(
+                  'Exception: ',
+                  '',
+                ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context),
+              child: const Text('موافق'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSavingInvoice = false;
+        });
+      }
+    }
+  }
+
+  // ============================================================
+  // فاتورة جديدة / إلغاء الحالية
+  // ============================================================
+
+  Future<void> newInvoice() async {
+    final cart = ref.read(cartProvider);
+
+    if (cart.isEmpty) {
+      return;
+    }
+
+    final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('فاتورة جديدة'),
         content: const Text(
-          'سيتم مسح الفاتورة الحالية.',
+          'سيتم إلغاء الفاتورة الحالية ومسح المنتجات منها.',
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () =>
+                Navigator.pop(context, false),
             child: const Text('إلغاء'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () =>
+                Navigator.pop(context, true),
             child: const Text('متابعة'),
           ),
         ],
       ),
-    ).then((ok) {
-      if (ok == true) {
-        ref.read(cartProvider.notifier).clear();
-      }
-    });
+    );
+
+    if (ok == true && mounted) {
+      ref.read(cartProvider.notifier).clear();
+
+      setState(() {
+        notice = null;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final cart = ref.watch(cartProvider);
     final total = ref.watch(cartTotalProvider);
+    final cartQuantity = ref.watch(cartQuantityProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -327,20 +471,27 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             icon: const Icon(
               Icons.inventory_2_outlined,
             ),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ProductsScreen(),
-                ),
-              );
-            },
+            onPressed: isSavingInvoice
+                ? null
+                : () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            const ProductsScreen(),
+                      ),
+                    );
+                  },
           ),
         ],
       ),
 
       body: Column(
         children: [
+          // ======================================================
+          // Scanner
+          // ======================================================
+
           SizedBox(
             height: 245,
             child: Stack(
@@ -350,7 +501,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   onDetect: handleScan,
                 ),
 
-                // منطقة توجيه الباركود.
                 Align(
                   alignment: Alignment.center,
                   child: Container(
@@ -361,7 +511,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         color: Colors.white,
                         width: 3,
                       ),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius:
+                          BorderRadius.circular(14),
                     ),
                   ),
                 ),
@@ -371,9 +522,13 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   right: 12,
                   child: FloatingActionButton.small(
                     heroTag: 'torch',
-                    backgroundColor: Colors.black54,
+                    backgroundColor:
+                        Colors.black54,
                     foregroundColor: Colors.white,
-                    onPressed: () => scanner.toggleTorch(),
+                    onPressed: isSavingInvoice
+                        ? null
+                        : () =>
+                            scanner.toggleTorch(),
                     child: const Icon(
                       Icons.flashlight_on,
                     ),
@@ -384,7 +539,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   Positioned.fill(
                     child: IgnorePointer(
                       child: Container(
-                        color: Colors.green.withOpacity(.22),
+                        color: Colors.green
+                            .withOpacity(.22),
                       ),
                     ),
                   ),
@@ -392,15 +548,25 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             ),
           ),
 
+          // ======================================================
+          // Notice
+          // ======================================================
+
           if (notice != null)
             Container(
               width: double.infinity,
-              color: notice == 'المنتج غير مسجل'
+              color: notice ==
+                      'المنتج غير مسجل'
                   ? Colors.red.shade700
-                  : notice == 'جاري التأكد من الباركود...'
+                  : notice ==
+                          'جاري التأكد من الباركود...'
                       ? Colors.orange.shade700
-                      : Colors.green.shade700,
-              padding: const EdgeInsets.symmetric(
+                      : notice ==
+                              'فشل حفظ الفاتورة'
+                          ? Colors.red.shade700
+                          : Colors.green.shade700,
+              padding:
+                  const EdgeInsets.symmetric(
                 vertical: 7,
                 horizontal: 12,
               ),
@@ -414,11 +580,16 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               ),
             ),
 
+          // ======================================================
+          // Cart
+          // ======================================================
+
           Expanded(
             child: cart.isEmpty
                 ? const Center(
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                      mainAxisSize:
+                          MainAxisSize.min,
                       children: [
                         Icon(
                           Icons.qr_code_scanner,
@@ -429,29 +600,36 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                           'وجّه الكاميرا إلى الباركود',
                           style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w600,
+                            fontWeight:
+                                FontWeight.w600,
                           ),
                         ),
                       ],
                     ),
                   )
                 : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(
+                    padding:
+                        const EdgeInsets.fromLTRB(
                       10,
                       8,
                       10,
-                      150,
+                      170,
                     ),
                     itemCount: cart.length,
                     separatorBuilder: (_, __) =>
                         const SizedBox(height: 6),
-                    itemBuilder: (_, i) => _CartRow(
+                    itemBuilder: (_, i) =>
+                        _CartRow(
                       item: cart[i],
                     ),
                   ),
           ),
         ],
       ),
+
+      // ==========================================================
+      // Bottom Checkout Area
+      // ==========================================================
 
       bottomSheet: SafeArea(
         child: Container(
@@ -462,7 +640,9 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
             12,
           ),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
+            color: Theme.of(context)
+                .colorScheme
+                .surface,
             boxShadow: const [
               BoxShadow(
                 blurRadius: 10,
@@ -470,35 +650,81 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               ),
             ],
           ),
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'الإجمالي',
-                      style: TextStyle(fontSize: 15),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      mainAxisSize:
+                          MainAxisSize.min,
+                      children: [
+                        Text(
+                          'عدد القطع: $cartQuantity',
+                          style: const TextStyle(
+                            fontSize: 14,
+                          ),
+                        ),
+                        const Text(
+                          'الإجمالي',
+                          style: TextStyle(
+                            fontSize: 15,
+                          ),
+                        ),
+                        PriceText(
+                          total,
+                          fontSize: 28,
+                          weight: FontWeight.w900,
+                        ),
+                      ],
                     ),
-                    PriceText(
-                      total,
-                      fontSize: 28,
-                      weight: FontWeight.w900,
+                  ),
+
+                  // إلغاء الفاتورة
+                  IconButton(
+                    tooltip: 'فاتورة جديدة',
+                    onPressed: cart.isEmpty ||
+                            isSavingInvoice
+                        ? null
+                        : newInvoice,
+                    icon: const Icon(
+                      Icons.refresh,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
+
+              const SizedBox(height: 8),
+
+              // إتمام البيع
               SizedBox(
+                width: double.infinity,
                 height: 54,
                 child: FilledButton.icon(
-                  onPressed: newInvoice,
-                  icon: const Icon(
-                    Icons.receipt_long,
-                  ),
-                  label: const Text(
-                    'فاتورة جديدة',
+                  onPressed: cart.isEmpty ||
+                          isSavingInvoice
+                      ? null
+                      : completeSale,
+                  icon: isSavingInvoice
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.point_of_sale,
+                        ),
+                  label: Text(
+                    isSavingInvoice
+                        ? 'جاري حفظ الفاتورة...'
+                        : 'إتمام البيع',
                   ),
                 ),
               ),
@@ -509,6 +735,10 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     );
   }
 }
+
+// ================================================================
+// Cart Row
+// ================================================================
 
 class _CartRow extends ConsumerWidget {
   final CartItem item;
@@ -524,23 +754,28 @@ class _CartRow extends ConsumerWidget {
   ) {
     return Dismissible(
       key: ValueKey(item.product.barcode),
-      direction: DismissDirection.endToStart,
+      direction:
+          DismissDirection.endToStart,
+
       background: Container(
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(
-          right: 20,
-        ),
+        padding:
+            const EdgeInsets.only(right: 20),
         color: Colors.red,
         child: const Icon(
           Icons.delete,
           color: Colors.white,
         ),
       ),
+
       onDismissed: (_) {
         ref
             .read(cartProvider.notifier)
-            .remove(item.product.barcode);
+            .remove(
+              item.product.barcode,
+            );
       },
+
       child: Card(
         child: Padding(
           padding: const EdgeInsets.all(10),
@@ -554,12 +789,15 @@ class _CartRow extends ConsumerWidget {
                     Text(
                       item.product.name,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      overflow:
+                          TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontWeight: FontWeight.bold,
+                        fontWeight:
+                            FontWeight.bold,
                         fontSize: 16,
                       ),
                     ),
+
                     PriceText(
                       item.product.price,
                       fontSize: 13,
@@ -572,13 +810,16 @@ class _CartRow extends ConsumerWidget {
               IconButton(
                 onPressed: () {
                   ref
-                      .read(cartProvider.notifier)
+                      .read(
+                        cartProvider.notifier,
+                      )
                       .decrement(
                         item.product.barcode,
                       );
                 },
                 icon: const Icon(
-                  Icons.remove_circle_outline,
+                  Icons
+                      .remove_circle_outline,
                 ),
               ),
 
@@ -586,14 +827,32 @@ class _CartRow extends ConsumerWidget {
                 '${item.quantity}',
                 style: const TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight:
+                      FontWeight.bold,
                 ),
               ),
 
               IconButton(
                 onPressed: () {
+                  if (item.quantity >=
+                      item.product.quantity) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'لا توجد كمية إضافية في المخزون',
+                        ),
+                      ),
+                    );
+
+                    return;
+                  }
+
                   ref
-                      .read(cartProvider.notifier)
+                      .read(
+                        cartProvider.notifier,
+                      )
                       .increment(
                         item.product.barcode,
                       );
