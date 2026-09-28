@@ -11,45 +11,35 @@ class ReportsScreen extends ConsumerStatefulWidget {
 }
 
 class _ReportsScreenState extends ConsumerState<ReportsScreen> {
-  DateTime _fromDate = DateTime(
-    DateTime.now().year,
-    DateTime.now().month,
-    DateTime.now().day,
-  );
+  DateTime _fromDate = DateTime.now();
+  DateTime _toDate = DateTime.now();
 
-  DateTime _toDate = DateTime(
-    DateTime.now().year,
-    DateTime.now().month,
-    DateTime.now().day,
-  );
+  bool _loading = false;
 
-  Map<String, dynamic>? _salesReport;
-
-  List<Map<String, dynamic>> _topProducts = [];
-
-  bool _isLoading = true;
+  Map<String, Object?>? _salesReport;
+  List<Map<String, Object?>> _topProducts = [];
 
   @override
   void initState() {
     super.initState();
-    _loadReport();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadReport();
+    });
   }
 
-  // ============================================================
-  // LOAD REPORT
-  // ============================================================
-
   Future<void> _loadReport() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-      });
+    if (_fromDate.isAfter(_toDate)) {
+      return;
     }
+
+    setState(() {
+      _loading = true;
+    });
 
     try {
       final db = ref.read(databaseProvider);
 
-      // بداية يوم البداية
       final from = DateTime(
         _fromDate.year,
         _fromDate.month,
@@ -59,7 +49,6 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         0,
       );
 
-      // نهاية يوم النهاية
       final to = DateTime(
         _toDate.year,
         _toDate.month,
@@ -86,25 +75,24 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       setState(() {
         _salesReport = salesReport;
         _topProducts = topProducts;
-        _isLoading = false;
+        _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
-        _isLoading = false;
+        _loading = false;
       });
 
-      _showMessage(
-        'حدث خطأ أثناء تحميل التقرير',
-        isError: true,
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'حدث خطأ أثناء تحميل التقرير: $e',
+          ),
+        ),
       );
     }
   }
-
-  // ============================================================
-  // FROM DATE
-  // ============================================================
 
   Future<void> _selectFromDate() async {
     final selected = await showDatePicker(
@@ -112,17 +100,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       initialDate: _fromDate,
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
-      locale: const Locale('ar'),
     );
 
     if (selected == null) return;
 
     setState(() {
-      _fromDate = DateTime(
-        selected.year,
-        selected.month,
-        selected.day,
-      );
+      _fromDate = selected;
 
       if (_fromDate.isAfter(_toDate)) {
         _toDate = _fromDate;
@@ -132,222 +115,236 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     await _loadReport();
   }
 
-  // ============================================================
-  // TO DATE
-  // ============================================================
-
   Future<void> _selectToDate() async {
     final selected = await showDatePicker(
       context: context,
       initialDate: _toDate,
-      firstDate: DateTime(2020),
+      firstDate: _fromDate,
       lastDate: DateTime.now(),
-      locale: const Locale('ar'),
     );
 
     if (selected == null) return;
 
-    if (selected.isBefore(_fromDate)) {
-      _showMessage(
-        'تاريخ النهاية لا يمكن أن يكون قبل تاريخ البداية',
-        isError: true,
-      );
-      return;
-    }
-
     setState(() {
-      _toDate = DateTime(
-        selected.year,
-        selected.month,
-        selected.day,
-      );
+      _toDate = selected;
     });
 
     await _loadReport();
   }
 
-  // ============================================================
-  // MESSAGE
-  // ============================================================
-
-  void _showMessage(
-    String message, {
-    bool isError = false,
-  }) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : null,
-      ),
-    );
-  }
-
-  // ============================================================
-  // FORMAT DATE
-  // ============================================================
-
   String _formatDate(DateTime date) {
-    return '${date.day.toString().padLeft(2, '0')}/'
-        '${date.month.toString().padLeft(2, '0')}/'
-        '${date.year}';
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+
+    return '$day/$month/$year';
   }
 
-  // ============================================================
-  // FORMAT MONEY
-  // ============================================================
+  double _toDouble(Object? value) {
+    if (value == null) return 0;
 
-  String _formatMoney(double value) {
-    return '${value.toStringAsFixed(2)} ج.م';
-  }
-
-  // ============================================================
-  // FORMAT QUANTITY
-  // ============================================================
-
-  String _formatQuantity(double value) {
-    if (value == value.truncateToDouble()) {
-      return value.toInt().toString();
+    if (value is num) {
+      return value.toDouble();
     }
 
-    return value.toStringAsFixed(2);
+    return double.tryParse(value.toString()) ?? 0;
   }
 
-  // ============================================================
-  // BUILD
-  // ============================================================
+  int _toInt(Object? value) {
+    if (value == null) return 0;
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value.toString()) ?? 0;
+  }
+
+  String _formatMoney(Object? value) {
+    return '${_toDouble(value).toStringAsFixed(2)} جنيه';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final invoiceCount =
-        (_salesReport?['invoice_count'] as num?)?.toInt() ?? 0;
+    final invoiceCount = _toInt(
+      _salesReport?['invoice_count'],
+    );
 
-    final totalSales =
-        (_salesReport?['total_sales'] as num?)?.toDouble() ?? 0;
+    final totalSales = _toDouble(
+      _salesReport?['total_sales'],
+    );
 
-    final itemCount =
-        (_salesReport?['item_count'] as num?)?.toDouble() ?? 0;
+    final itemCount = _toInt(
+      _salesReport?['item_count'],
+    );
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text(
-            'التقارير',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-            ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'التقارير',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
           ),
-          centerTitle: true,
-          actions: [
-            IconButton(
-              onPressed: _isLoading ? null : _loadReport,
-              tooltip: 'تحديث',
-              icon: const Icon(Icons.refresh),
-            ),
-          ],
         ),
-        body: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(),
-              )
-            : RefreshIndicator(
-                onRefresh: _loadReport,
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    _buildDateFilter(),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _loadReport,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _loadReport,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _buildDateFilter(),
 
-                    const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-                    _buildSummaryCards(
-                      invoiceCount: invoiceCount,
-                      totalSales: totalSales,
-                      itemCount: itemCount,
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    const Text(
-                      'الأكثر مبيعًا',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 10),
-
-                    _buildTopProducts(),
-                  ],
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 30),
+                  child: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else ...[
+                _buildSummaryCards(
+                  invoiceCount: invoiceCount,
+                  totalSales: totalSales,
+                  itemCount: itemCount,
                 ),
-              ),
+
+                const SizedBox(height: 24),
+
+                _buildTopProducts(),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  // ============================================================
-  // DATE FILTER
-  // ============================================================
-
   Widget _buildDateFilter() {
     return Card(
-      elevation: 1,
+      elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'فترة التقرير',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-              ),
+            const Row(
+              children: [
+                Icon(
+                  Icons.date_range,
+                  color: Colors.purple,
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'فترة التقرير',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _selectFromDate,
-                    icon: const Icon(Icons.calendar_today),
-                    label: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('من'),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatDate(_fromDate),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: _buildDateButton(
+                    title: 'من تاريخ',
+                    date: _fromDate,
+                    onTap: _selectFromDate,
                   ),
                 ),
 
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
 
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _selectToDate,
-                    icon: const Icon(Icons.event),
-                    label: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('إلى'),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatDate(_toDate),
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
+                  child: _buildDateButton(
+                    title: 'إلى تاريخ',
+                    date: _toDate,
+                    onTap: _selectToDate,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            SizedBox(
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: _loading ? null : _loadReport,
+                icon: const Icon(Icons.analytics),
+                label: const Text(
+                  'عرض التقرير',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateButton({
+    required String title,
+    required DateTime date,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: Colors.grey.shade400,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Icon(
+                  Icons.calendar_month,
+                  size: 20,
+                  color: Colors.purple,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _formatDate(date),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
@@ -359,196 +356,67 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
-  // ============================================================
-  // SUMMARY CARDS
-  // ============================================================
-
   Widget _buildSummaryCards({
     required int invoiceCount,
     required double totalSales,
-    required double itemCount,
+    required int itemCount,
   }) {
     return Column(
       children: [
         Row(
           children: [
             Expanded(
-              child: _SummaryCard(
-                icon: Icons.payments,
-                title: 'إجمالي المبيعات',
-                value: _formatMoney(totalSales),
-                color: Colors.green,
-              ),
-            ),
-
-            const SizedBox(width: 10),
-
-            Expanded(
-              child: _SummaryCard(
+              child: _summaryCard(
                 icon: Icons.receipt_long,
                 title: 'الفواتير',
                 value: invoiceCount.toString(),
                 color: Colors.orange,
               ),
             ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _summaryCard(
+                icon: Icons.shopping_cart,
+                title: 'المنتجات المباعة',
+                value: itemCount.toString(),
+                color: Colors.blue,
+              ),
+            ),
           ],
         ),
 
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
 
-        _SummaryCard(
-          icon: Icons.shopping_cart,
-          title: 'المنتجات المباعة',
-          value: _formatQuantity(itemCount),
-          color: Colors.blue,
+        _summaryCard(
+          icon: Icons.payments,
+          title: 'إجمالي المبيعات',
+          value: _formatMoney(totalSales),
+          color: Colors.green,
+          large: true,
         ),
       ],
     );
   }
 
-  // ============================================================
-  // TOP PRODUCTS
-  // ============================================================
-
-  Widget _buildTopProducts() {
-    if (_topProducts.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            children: [
-              Icon(
-                Icons.bar_chart,
-                size: 50,
-                color: Colors.grey.shade400,
-              ),
-
-              const SizedBox(height: 12),
-
-              Text(
-                'لا توجد مبيعات في الفترة المحددة',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                  fontSize: 16,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
+  Widget _summaryCard({
+    required IconData icon,
+    required String title,
+    required String value,
+    required Color color,
+    bool large = false,
+  }) {
     return Card(
-      clipBehavior: Clip.antiAlias,
-      child: ListView.separated(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _topProducts.length,
-        separatorBuilder: (context, index) {
-          return const Divider(height: 1);
-        },
-        itemBuilder: (context, index) {
-          final product = _topProducts[index];
-
-          final name =
-              product['product_name'] as String? ?? 'غير معروف';
-
-          final quantity =
-              (product['total_quantity'] as num?)
-                  ?.toDouble() ??
-              0;
-
-          final total =
-              (product['total_sales'] as num?)
-                  ?.toDouble() ??
-              0;
-
-          return ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 6,
-            ),
-
-            leading: CircleAvatar(
-              child: Text(
-                '${index + 1}',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-
-            title: Text(
-              name,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            subtitle: Text(
-              'الكمية المباعة: ${_formatQuantity(quantity)}',
-            ),
-
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  _formatMoney(total),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-
-                const SizedBox(height: 3),
-
-                Text(
-                  '${_formatQuantity(quantity)} قطعة',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ============================================================
-// SUMMARY CARD
-// ============================================================
-
-class _SummaryCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-  final Color color;
-
-  const _SummaryCard({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 1,
+      elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(large ? 20 : 16),
         child: Column(
           children: [
             CircleAvatar(
+              radius: large ? 28 : 24,
               backgroundColor: color.withValues(alpha: 0.12),
               child: Icon(
                 icon,
+                size: large ? 30 : 26,
                 color: color,
               ),
             ),
@@ -559,8 +427,8 @@ class _SummaryCard extends StatelessWidget {
               title,
               textAlign: TextAlign.center,
               style: TextStyle(
+                fontSize: large ? 15 : 13,
                 color: Colors.grey.shade700,
-                fontSize: 13,
               ),
             ),
 
@@ -569,11 +437,124 @@ class _SummaryCard extends StatelessWidget {
             Text(
               value,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 19,
+              style: TextStyle(
+                fontSize: large ? 24 : 22,
                 fontWeight: FontWeight.bold,
+                color: color,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopProducts() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Row(
+              children: [
+                Icon(
+                  Icons.trending_up,
+                  color: Colors.purple,
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'أكثر المنتجات مبيعاً',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            if (_topProducts.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 24,
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.inventory_2_outlined,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'لا توجد مبيعات خلال هذه الفترة',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _topProducts.length,
+                separatorBuilder: (_, __) => const Divider(),
+                itemBuilder: (context, index) {
+                  final product = _topProducts[index];
+
+                  final productName =
+                      product['product_name']?.toString() ??
+                          'منتج غير معروف';
+
+                  final quantity = _toDouble(
+                    product['total_quantity'],
+                  );
+
+                  final sales = _toDouble(
+                    product['total_sales'],
+                  );
+
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+
+                    leading: CircleAvatar(
+                      backgroundColor:
+                          Colors.purple.withValues(alpha: 0.12),
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.purple,
+                        ),
+                      ),
+                    ),
+
+                    title: Text(
+                      productName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+
+                    subtitle: Text(
+                      'الكمية المباعة: ${quantity.toStringAsFixed(0)}',
+                    ),
+
+                    trailing: Text(
+                      _formatMoney(sales),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                  );
+                },
+              ),
           ],
         ),
       ),
