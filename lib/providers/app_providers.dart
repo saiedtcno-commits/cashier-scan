@@ -133,7 +133,7 @@ final saveInvoiceProvider = Provider<Future<String> Function()>((ref) {
         'product_id': productId,
         'barcode': item.product.barcode,
         'product_name': item.product.name,
-        'unit_price': item.product.price,
+        'price': item.product.price,
         'quantity': item.quantity,
         'line_total': item.lineTotal,
       };
