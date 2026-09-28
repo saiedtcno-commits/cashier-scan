@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/database.dart';
+import '../data/database.dart';[
 import '../models/product.dart';
 import '../providers/app_providers.dart';
 
@@ -184,16 +184,16 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
 
       if (isAdding) {
         await db.addStock(
-          product.id!,
-          quantity,
-          note: note,
-        );
+  productId: product.id!,
+  quantity: quantity,
+  note: note,
+);
       } else {
         await db.removeStock(
-          product.id!,
-          quantity,
-          note: note,
-        );
+  productId: product.id!,
+  quantity: quantity,
+  note: note,
+);
       }
 
       await _loadProducts();
@@ -222,8 +222,10 @@ class _InventoryScreenState extends ConsumerState<InventoryScreen> {
 
     try {
       final movements = await ref
-          .read(databaseProvider)
-          .getStockMovements(product.id!);
+    .read(databaseProvider)
+    .getStockMovements(
+      productId: product.id!,
+    );
 
       if (!mounted) return;
 
