@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/checkout_screen.dart';
 import 'screens/inventory_screen.dart';
 import 'screens/invoices_screen.dart';
+import 'screens/reports_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -121,27 +122,19 @@ class HomeScreen extends StatelessWidget {
 ),
 
               _HomeCard(
-                icon: Icons.bar_chart,
-                title: 'التقارير',
-                subtitle: 'تقارير المبيعات',
-                color: Colors.purple,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'شاشة التقارير سيتم إضافتها لاحقًا',
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        ),
+  icon: Icons.bar_chart,
+  title: 'التقارير',
+  subtitle: 'تقارير المبيعات',
+  color: Colors.purple,
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ReportsScreen(),
       ),
     );
-  }
-}
+  },
+),
 
 class _HomeCard extends StatelessWidget {
   final IconData icon;
