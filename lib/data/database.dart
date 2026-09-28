@@ -15,7 +15,9 @@ class AppDatabase {
   // ============================================================
 
   Future<Database> get database async {
-    if (_db != null) return _db!;
+    if (_db != null) {
+      return _db!;
+    }
 
     final path = join(
       await getDatabasesPath(),
@@ -25,9 +27,20 @@ class AppDatabase {
     _db = await openDatabase(
       path,
       version: 2,
+
+      // Enable foreign keys.
+      onConfigure: (db) async {
+        await db.execute(
+          'PRAGMA foreign_keys = ON',
+        );
+      },
+
+      // New installation.
       onCreate: (db, version) async {
         await _createDatabase(db);
       },
+
+      // Existing database upgrade.
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await _upgradeToVersion2(db);
@@ -169,7 +182,9 @@ class AppDatabase {
   // Version 1 → Version 2
   // ============================================================
 
-  Future<void> _upgradeToVersion2(Database db) async {
+  Future<void> _upgradeToVersion2(
+    Database db,
+  ) async {
     // ----------------------------------------------------------
     // Add quantity to existing products
     // ----------------------------------------------------------
@@ -291,6 +306,10 @@ class AppDatabase {
     return rows.map(Product.fromMap).toList();
   }
 
+  // ============================================================
+  // FIND PRODUCT BY BARCODE
+  // ============================================================
+
   Future<Product?> findByBarcode(
     String barcode,
   ) async {
@@ -308,6 +327,10 @@ class AppDatabase {
         : Product.fromMap(rows.first);
   }
 
+  // ============================================================
+  // INSERT PRODUCT
+  // ============================================================
+
   Future<int> insertProduct(
     Product product,
   ) async {
@@ -316,14 +339,21 @@ class AppDatabase {
     final data = product.toMap()
       ..remove('id');
 
-    // quantity لو الموديل الحالي لسه مش متحدث
-    data.putIfAbsent('quantity', () => 0.0);
+    // Make sure quantity exists.
+    data.putIfAbsent(
+      'quantity',
+      () => 0.0,
+    );
 
     return db.insert(
       'products',
       data,
     );
   }
+
+  // ============================================================
+  // UPDATE PRODUCT
+  // ============================================================
 
   Future<int> updateProduct(
     Product product,
@@ -340,6 +370,10 @@ class AppDatabase {
       whereArgs: [product.id],
     );
   }
+
+  // ============================================================
+  // DELETE PRODUCT
+  // ============================================================
 
   Future<int> deleteProduct(
     int id,
@@ -374,8 +408,13 @@ class AppDatabase {
       return 0;
     }
 
-    return (rows.first['quantity'] as num).toDouble();
+    return (rows.first['quantity'] as num)
+        .toDouble();
   }
+
+  // ============================================================
+  // ADD STOCK
+  // ============================================================
 
   Future<void> addStock({
     required int productId,
@@ -392,6 +431,22 @@ class AppDatabase {
 
     await db.transaction(
       (txn) async {
+        // Check product exists.
+        final productRows = await txn.query(
+          'products',
+          columns: ['id'],
+          where: 'id = ?',
+          whereArgs: [productId],
+          limit: 1,
+        );
+
+        if (productRows.isEmpty) {
+          throw Exception(
+            'المنتج غير موجود.',
+          );
+        }
+
+        // Increase stock.
         await txn.rawUpdate(
           '''
           UPDATE products
@@ -404,6 +459,7 @@ class AppDatabase {
           ],
         );
 
+        // Record movement.
         await txn.insert(
           'stock_movements',
           {
@@ -418,6 +474,10 @@ class AppDatabase {
       },
     );
   }
+
+  // ============================================================
+  // REMOVE STOCK
+  // ============================================================
 
   Future<void> removeStock({
     required int productId,
@@ -444,7 +504,7 @@ class AppDatabase {
 
         if (rows.isEmpty) {
           throw Exception(
-            'Product not found.',
+            'المنتج غير موجود.',
           );
         }
 
@@ -458,6 +518,7 @@ class AppDatabase {
           );
         }
 
+        // Decrease stock.
         await txn.rawUpdate(
           '''
           UPDATE products
@@ -470,6 +531,7 @@ class AppDatabase {
           ],
         );
 
+        // Record movement.
         await txn.insert(
           'stock_movements',
           {
@@ -511,7 +573,7 @@ class AppDatabase {
   }
 
   // ============================================================
-  // INVOICE NUMBER
+  // NEXT INVOICE NUMBER
   // ============================================================
 
   Future<int> getNextInvoiceNumber() async {
@@ -524,7 +586,8 @@ class AppDatabase {
       ''',
     );
 
-    final maxNumber = rows.first['max_number'];
+    final maxNumber =
+        rows.first['max_number'];
 
     if (maxNumber == null) {
       return 1;
@@ -541,12 +604,32 @@ class AppDatabase {
     required List<Map<String, dynamic>> items,
     required double total,
   }) async {
+    if (items.isEmpty) {
+      throw Exception(
+        'لا يمكن حفظ فاتورة فارغة.',
+      );
+    }
+
+    if (total < 0) {
+      throw Exception(
+        'قيمة الفاتورة غير صحيحة.',
+      );
+    }
+
     final db = await database;
 
     return db.transaction(
       (txn) async {
+        // ------------------------------------------------------
+        // Generate invoice number
+        // ------------------------------------------------------
+
         final invoiceNumber =
             await _getNextInvoiceNumber(txn);
+
+        // ------------------------------------------------------
+        // Create invoice
+        // ------------------------------------------------------
 
         final invoiceId = await txn.insert(
           'invoices',
@@ -558,15 +641,30 @@ class AppDatabase {
           },
         );
 
+        // ------------------------------------------------------
+        // Process invoice items
+        // ------------------------------------------------------
+
         for (final item in items) {
           final productId =
               item['product_id'] as int;
 
           final quantity =
-              (item['quantity'] as num).toDouble();
+              (item['quantity'] as num)
+                  .toDouble();
 
-          // Check stock
-          final productRows = await txn.query(
+          if (quantity <= 0) {
+            throw Exception(
+              'كمية المنتج غير صحيحة.',
+            );
+          }
+
+          // ----------------------------------------------------
+          // Get current stock
+          // ----------------------------------------------------
+
+          final productRows =
+              await txn.query(
             'products',
             columns: [
               'quantity',
@@ -578,7 +676,7 @@ class AppDatabase {
 
           if (productRows.isEmpty) {
             throw Exception(
-              'Product not found.',
+              'المنتج غير موجود.',
             );
           }
 
@@ -587,6 +685,10 @@ class AppDatabase {
                       as num)
                   .toDouble();
 
+          // ----------------------------------------------------
+          // Validate stock
+          // ----------------------------------------------------
+
           if (currentStock < quantity) {
             throw Exception(
               'الكمية المتاحة غير كافية للمنتج: '
@@ -594,7 +696,10 @@ class AppDatabase {
             );
           }
 
+          // ----------------------------------------------------
           // Save invoice item
+          // ----------------------------------------------------
+
           await txn.insert(
             'invoice_items',
             {
@@ -610,7 +715,10 @@ class AppDatabase {
             },
           );
 
-          // Decrease stock
+          // ----------------------------------------------------
+          // Decrease product stock
+          // ----------------------------------------------------
+
           await txn.rawUpdate(
             '''
             UPDATE products
@@ -623,7 +731,10 @@ class AppDatabase {
             ],
           );
 
-          // Stock movement
+          // ----------------------------------------------------
+          // Record SALE movement
+          // ----------------------------------------------------
+
           await txn.insert(
             'stock_movements',
             {
@@ -639,10 +750,16 @@ class AppDatabase {
           );
         }
 
-        return invoiceId;
+        // مهم:
+        // نرجع رقم الفاتورة وليس ID قاعدة البيانات.
+        return invoiceNumber;
       },
     );
   }
+
+  // ============================================================
+  // NEXT INVOICE NUMBER - TRANSACTION
+  // ============================================================
 
   Future<int> _getNextInvoiceNumber(
     Transaction txn,
@@ -654,7 +771,8 @@ class AppDatabase {
       ''',
     );
 
-    final maxNumber = rows.first['max_number'];
+    final maxNumber =
+        rows.first['max_number'];
 
     if (maxNumber == null) {
       return 1;
@@ -684,14 +802,20 @@ class AppDatabase {
 
     return db.query(
       'invoices',
-      where: 'CAST(invoice_number AS TEXT) LIKE ?',
+      where:
+          'CAST(invoice_number AS TEXT) LIKE ?',
       whereArgs: ['%$q%'],
       orderBy: 'created_at DESC',
     );
   }
 
-  Future<Map<String, dynamic>?>
-      getInvoice(int invoiceId) async {
+  // ============================================================
+  // GET INVOICE DETAILS
+  // ============================================================
+
+  Future<Map<String, dynamic>?> getInvoice(
+    int invoiceId,
+  ) async {
     final db = await database;
 
     final invoices = await db.query(
@@ -709,6 +833,7 @@ class AppDatabase {
       'invoice_items',
       where: 'invoice_id = ?',
       whereArgs: [invoiceId],
+      orderBy: 'id ASC',
     );
 
     return {
@@ -718,7 +843,7 @@ class AppDatabase {
   }
 
   // ============================================================
-  // REPORTS
+  // SALES REPORT
   // ============================================================
 
   Future<Map<String, dynamic>>
@@ -734,6 +859,10 @@ class AppDatabase {
     final toText =
         to.toIso8601String();
 
+    // ----------------------------------------------------------
+    // Invoice count + total sales
+    // ----------------------------------------------------------
+
     final summary = await db.rawQuery(
       '''
       SELECT
@@ -748,6 +877,10 @@ class AppDatabase {
         toText,
       ],
     );
+
+    // ----------------------------------------------------------
+    // Total sold items
+    // ----------------------------------------------------------
 
     final items = await db.rawQuery(
       '''
@@ -770,16 +903,22 @@ class AppDatabase {
           (summary.first['invoice_count']
                   as num)
               .toInt(),
+
       'total_sales':
           (summary.first['total_sales']
                   as num)
               .toDouble(),
+
       'item_count':
           (items.first['item_count']
                   as num)
               .toDouble(),
     };
   }
+
+  // ============================================================
+  // TOP SELLING PRODUCTS
+  // ============================================================
 
   Future<List<Map<String, dynamic>>>
       getTopSellingProducts({
