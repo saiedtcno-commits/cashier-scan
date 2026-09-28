@@ -150,6 +150,6 @@ final saveInvoiceProvider = Provider<Future<String> Function()>((ref) {
     // تحديث قائمة المنتجات حتى تظهر الكميات الجديدة.
     ref.invalidate(productsProvider);
 
-    return invoiceNumber;
+    return invoiceNumber.toString();
   };
 });
