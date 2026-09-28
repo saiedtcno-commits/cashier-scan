@@ -36,8 +36,10 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
 
     try {
       final invoices = await ref
-          .read(databaseProvider)
-          .getInvoices(_searchController.text.trim());
+    .read(databaseProvider)
+    .getInvoices(
+      query: _searchController.text.trim(),
+    );
 
       if (!mounted) return;
 
