@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/database.dart';
 import '../providers/app_providers.dart';
 
 class ReportsScreen extends ConsumerStatefulWidget {
@@ -24,8 +23,9 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     DateTime.now().day,
   );
 
-  Map<String, Object?>? _salesReport;
-  List<Map<String, Object?>> _topProducts = [];
+  Map<String, dynamic>? _salesReport;
+
+  List<Map<String, dynamic>> _topProducts = [];
 
   bool _isLoading = true;
 
@@ -35,39 +35,40 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     _loadReport();
   }
 
-  String _startDateTime() {
-    return DateTime(
-      _fromDate.year,
-      _fromDate.month,
-      _fromDate.day,
-      0,
-      0,
-      0,
-    ).toIso8601String();
-  }
-
-  String _endDateTime() {
-    return DateTime(
-      _toDate.year,
-      _toDate.month,
-      _toDate.day,
-      23,
-      59,
-      59,
-      999,
-    ).toIso8601String();
-  }
+  // ============================================================
+  // LOAD REPORT
+  // ============================================================
 
   Future<void> _loadReport() async {
-    setState(() {
-      _isLoading = true;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+      });
+    }
 
     try {
       final db = ref.read(databaseProvider);
 
-      final from = _startDateTime();
-      final to = _endDateTime();
+      // بداية يوم البداية
+      final from = DateTime(
+        _fromDate.year,
+        _fromDate.month,
+        _fromDate.day,
+        0,
+        0,
+        0,
+      );
+
+      // نهاية يوم النهاية
+      final to = DateTime(
+        _toDate.year,
+        _toDate.month,
+        _toDate.day,
+        23,
+        59,
+        59,
+        999,
+      );
 
       final salesReport = await db.getSalesReport(
         from: from,
@@ -101,6 +102,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
   }
 
+  // ============================================================
+  // FROM DATE
+  // ============================================================
+
   Future<void> _selectFromDate() async {
     final selected = await showDatePicker(
       context: context,
@@ -113,7 +118,11 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     if (selected == null) return;
 
     setState(() {
-      _fromDate = selected;
+      _fromDate = DateTime(
+        selected.year,
+        selected.month,
+        selected.day,
+      );
 
       if (_fromDate.isAfter(_toDate)) {
         _toDate = _fromDate;
@@ -122,6 +131,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 
     await _loadReport();
   }
+
+  // ============================================================
+  // TO DATE
+  // ============================================================
 
   Future<void> _selectToDate() async {
     final selected = await showDatePicker(
@@ -143,11 +156,19 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
 
     setState(() {
-      _toDate = selected;
+      _toDate = DateTime(
+        selected.year,
+        selected.month,
+        selected.day,
+      );
     });
 
     await _loadReport();
   }
+
+  // ============================================================
+  // MESSAGE
+  // ============================================================
 
   void _showMessage(
     String message, {
@@ -161,15 +182,27 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
+  // ============================================================
+  // FORMAT DATE
+  // ============================================================
+
   String _formatDate(DateTime date) {
     return '${date.day.toString().padLeft(2, '0')}/'
         '${date.month.toString().padLeft(2, '0')}/'
         '${date.year}';
   }
 
+  // ============================================================
+  // FORMAT MONEY
+  // ============================================================
+
   String _formatMoney(double value) {
     return '${value.toStringAsFixed(2)} ج.م';
   }
+
+  // ============================================================
+  // FORMAT QUANTITY
+  // ============================================================
 
   String _formatQuantity(double value) {
     if (value == value.truncateToDouble()) {
@@ -178,6 +211,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
 
     return value.toStringAsFixed(2);
   }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -194,7 +231,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('التقارير'),
+          title: const Text(
+            'التقارير',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           centerTitle: true,
           actions: [
             IconButton(
@@ -204,13 +246,14 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
             ),
           ],
         ),
-        body: RefreshIndicator(
-          onRefresh: _loadReport,
-          child: _isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(),
-                )
-              : ListView(
+        body: _isLoading
+            ? const Center(
+                child: CircularProgressIndicator(),
+              )
+            : RefreshIndicator(
+                onRefresh: _loadReport,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.all(16),
                   children: [
                     _buildDateFilter(),
@@ -238,13 +281,18 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                     _buildTopProducts(),
                   ],
                 ),
-        ),
+              ),
       ),
     );
   }
 
+  // ============================================================
+  // DATE FILTER
+  // ============================================================
+
   Widget _buildDateFilter() {
     return Card(
+      elevation: 1,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -267,8 +315,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                     onPressed: _selectFromDate,
                     icon: const Icon(Icons.calendar_today),
                     label: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text('من'),
+                        const SizedBox(height: 2),
                         Text(
                           _formatDate(_fromDate),
                           style: const TextStyle(
@@ -287,8 +337,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                     onPressed: _selectToDate,
                     icon: const Icon(Icons.event),
                     label: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text('إلى'),
+                        const SizedBox(height: 2),
                         Text(
                           _formatDate(_toDate),
                           style: const TextStyle(
@@ -307,6 +359,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
+  // ============================================================
+  // SUMMARY CARDS
+  // ============================================================
+
   Widget _buildSummaryCards({
     required int invoiceCount,
     required double totalSales,
@@ -324,7 +380,9 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 color: Colors.green,
               ),
             ),
+
             const SizedBox(width: 10),
+
             Expanded(
               child: _SummaryCard(
                 icon: Icons.receipt_long,
@@ -348,6 +406,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 
+  // ============================================================
+  // TOP PRODUCTS
+  // ============================================================
+
   Widget _buildTopProducts() {
     if (_topProducts.isEmpty) {
       return Card(
@@ -360,13 +422,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 size: 50,
                 color: Colors.grey.shade400,
               ),
+
               const SizedBox(height: 12),
+
               Text(
                 'لا توجد مبيعات في الفترة المحددة',
                 style: TextStyle(
                   color: Colors.grey.shade600,
                   fontSize: 16,
                 ),
+                textAlign: TextAlign.center,
               ),
             ],
           ),
@@ -375,27 +440,36 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     }
 
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: ListView.separated(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: _topProducts.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
+        separatorBuilder: (context, index) {
+          return const Divider(height: 1);
+        },
         itemBuilder: (context, index) {
           final product = _topProducts[index];
 
           final name =
               product['product_name'] as String? ?? 'غير معروف';
 
-          final barcode =
-              product['barcode'] as String? ?? '';
-
           final quantity =
-              (product['quantity'] as num?)?.toDouble() ?? 0;
+              (product['total_quantity'] as num?)
+                  ?.toDouble() ??
+              0;
 
           final total =
-              (product['total_sales'] as num?)?.toDouble() ?? 0;
+              (product['total_sales'] as num?)
+                  ?.toDouble() ??
+              0;
 
           return ListTile(
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 6,
+            ),
+
             leading: CircleAvatar(
               child: Text(
                 '${index + 1}',
@@ -404,18 +478,18 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                 ),
               ),
             ),
+
             title: Text(
               name,
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
               ),
             ),
+
             subtitle: Text(
-              barcode.isEmpty
-                  ? 'الكمية: ${_formatQuantity(quantity)}'
-                  : '$barcode\nالكمية: ${_formatQuantity(quantity)}',
+              'الكمية المباعة: ${_formatQuantity(quantity)}',
             ),
-            isThreeLine: barcode.isNotEmpty,
+
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -424,8 +498,12 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
                   _formatMoney(total),
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
+                    fontSize: 15,
                   ),
                 ),
+
+                const SizedBox(height: 3),
+
                 Text(
                   '${_formatQuantity(quantity)} قطعة',
                   style: TextStyle(
@@ -441,6 +519,10 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
     );
   }
 }
+
+// ============================================================
+// SUMMARY CARD
+// ============================================================
 
 class _SummaryCard extends StatelessWidget {
   final IconData icon;
@@ -458,6 +540,7 @@ class _SummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
+      elevation: 1,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
