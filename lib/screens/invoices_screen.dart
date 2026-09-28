@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../data/database.dart';
 import '../providers/app_providers.dart';
 
 class InvoicesScreen extends ConsumerStatefulWidget {
@@ -12,7 +11,8 @@ class InvoicesScreen extends ConsumerStatefulWidget {
 }
 
 class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
-  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _searchController =
+      TextEditingController();
 
   List<Map<String, Object?>> _invoices = [];
   bool _isLoading = true;
@@ -36,10 +36,10 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
 
     try {
       final invoices = await ref
-    .read(databaseProvider)
-    .getInvoices(
-      query: _searchController.text.trim(),
-    );
+          .read(databaseProvider)
+          .getInvoices(
+            query: _searchController.text.trim(),
+          );
 
       if (!mounted) return;
 
@@ -139,13 +139,17 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
       textDirection: TextDirection.rtl,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('الفواتير والمبيعات'),
+          title: const Text(
+            'الفواتير والمبيعات',
+          ),
           centerTitle: true,
           actions: [
             IconButton(
               onPressed: _loadInvoices,
               tooltip: 'تحديث',
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(
+                Icons.refresh,
+              ),
             ),
           ],
         ),
@@ -160,17 +164,22 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
                 onSubmitted: (_) => _loadInvoices(),
                 decoration: InputDecoration(
                   hintText: 'ابحث برقم الفاتورة',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          onPressed: () {
-                            _searchController.clear();
-                            _loadInvoices();
-                            setState(() {});
-                          },
-                          icon: const Icon(Icons.clear),
-                        ),
+                  prefixIcon: const Icon(
+                    Icons.search,
+                  ),
+                  suffixIcon:
+                      _searchController.text.isEmpty
+                          ? null
+                          : IconButton(
+                              onPressed: () {
+                                _searchController.clear();
+                                _loadInvoices();
+                                setState(() {});
+                              },
+                              icon: const Icon(
+                                Icons.clear,
+                              ),
+                            ),
                   border: const OutlineInputBorder(),
                 ),
                 onChanged: (_) {
@@ -214,53 +223,64 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
                             separatorBuilder: (_, __) =>
                                 const SizedBox(height: 8),
                             itemBuilder: (context, index) {
-                              final invoice = _invoices[index];
+                              final invoice =
+                                  _invoices[index];
 
                               final invoiceNumber =
-                                  (invoice['invoice_number'] as num?)
+                                  (invoice['invoice_number']
+                                          as num?)
                                       ?.toInt() ??
-                                  0;
+                                      0;
 
                               final total =
                                   (invoice['total'] as num?)
                                       ?.toDouble() ??
-                                  0;
+                                      0;
 
                               final createdAt =
-                                  invoice['created_at'] as String? ??
-                                  '';
+                                  invoice['created_at']
+                                          as String? ??
+                                      '';
 
                               return Card(
                                 child: ListTile(
                                   onTap: () =>
-                                      _showInvoiceDetails(invoice),
-                                  leading: CircleAvatar(
-                                    child: const Icon(
+                                      _showInvoiceDetails(
+                                    invoice,
+                                  ),
+                                  leading: const CircleAvatar(
+                                    child: Icon(
                                       Icons.receipt_long,
                                     ),
                                   ),
                                   title: Text(
                                     'فاتورة #$invoiceNumber',
                                     style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
+                                      fontWeight:
+                                          FontWeight.bold,
                                       fontSize: 17,
                                     ),
                                   ),
                                   subtitle: createdAt.isEmpty
                                       ? null
                                       : Text(
-                                          _formatDate(createdAt),
+                                          _formatDate(
+                                            createdAt,
+                                          ),
                                         ),
                                   trailing: Column(
                                     mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                        MainAxisAlignment
+                                            .center,
                                     crossAxisAlignment:
                                         CrossAxisAlignment.end,
                                     children: [
                                       Text(
                                         _formatMoney(total),
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
+                                        style:
+                                            const TextStyle(
+                                          fontWeight:
+                                              FontWeight.bold,
                                           fontSize: 16,
                                         ),
                                       ),
@@ -320,17 +340,35 @@ class _InvoiceDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // =========================================================
+    // FIX:
+    // getInvoice() returns:
+    //
+    // {
+    //   'invoice': invoices.first,
+    //   'items': items,
+    // }
+    //
+    // لذلك بيانات الفاتورة الأساسية موجودة داخل invoice['invoice']
+    // =========================================================
+
+    final invoiceData =
+        (invoice['invoice'] as Map?)?.cast<String, Object?>() ??
+            <String, Object?>{};
+
     final invoiceNumber =
-        (invoice['invoice_number'] as num?)?.toInt() ?? 0;
+        (invoiceData['invoice_number'] as num?)?.toInt() ?? 0;
 
     final total =
-        (invoice['total'] as num?)?.toDouble() ?? 0;
+        (invoiceData['total'] as num?)?.toDouble() ?? 0;
 
     final createdAt =
-        invoice['created_at'] as String? ?? '';
+        invoiceData['created_at'] as String? ?? '';
 
     final items =
-        (invoice['items'] as List?)?.cast<Map<String, Object?>>() ??
+        (invoice['items'] as List?)
+                ?.cast<Map<String, Object?>>()
+                .toList() ??
             [];
 
     return Directionality(
@@ -356,6 +394,7 @@ class _InvoiceDetailsSheet extends StatelessWidget {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
+
                     if (createdAt.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
@@ -369,12 +408,16 @@ class _InvoiceDetailsSheet extends StatelessWidget {
                 ),
               ),
 
-              const Divider(height: 1),
+              const Divider(
+                height: 1,
+              ),
 
               Expanded(
                 child: items.isEmpty
                     ? const Center(
-                        child: Text('لا توجد تفاصيل للفاتورة'),
+                        child: Text(
+                          'لا توجد تفاصيل للفاتورة',
+                        ),
                       )
                     : ListView.separated(
                         padding: const EdgeInsets.all(12),
@@ -385,7 +428,8 @@ class _InvoiceDetailsSheet extends StatelessWidget {
                           final item = items[index];
 
                           final name =
-                              item['product_name'] as String? ??
+                              item['product_name']
+                                      as String? ??
                                   'منتج';
 
                           final price =
@@ -425,6 +469,9 @@ class _InvoiceDetailsSheet extends StatelessWidget {
                       ),
               ),
 
+              // =================================================
+              // INVOICE TOTAL
+              // =================================================
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -448,6 +495,7 @@ class _InvoiceDetailsSheet extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
+                        color: Colors.green,
                       ),
                     ),
                   ],
