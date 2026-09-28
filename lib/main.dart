@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'screens/checkout_screen.dart';
 import 'screens/inventory_screen.dart';
-
+import 'screens/invoices_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -106,20 +106,19 @@ class HomeScreen extends StatelessWidget {
               ),
 
               _HomeCard(
-                icon: Icons.receipt_long,
-                title: 'الفواتير',
-                subtitle: 'المبيعات والفواتير',
-                color: Colors.orange,
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'شاشة الفواتير سيتم إضافتها في الخطوة التالية',
-                      ),
-                    ),
-                  );
-                },
-              ),
+  icon: Icons.receipt_long,
+  title: 'الفواتير',
+  subtitle: 'المبيعات والفواتير',
+  color: Colors.orange,
+  onTap: () {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const InvoicesScreen(),
+      ),
+    );
+  },
+),
 
               _HomeCard(
                 icon: Icons.bar_chart,
